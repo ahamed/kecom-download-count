@@ -48,6 +48,26 @@
                 </span>
                 <span>Live · <span id="last-updated">Connecting…</span></span>
             </footer>
+
+            <div class="mt-6 text-center">
+                <button id="history-toggle" type="button" class="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-4 py-1.5 text-sm text-slate-300 transition-colors hover:border-slate-700 hover:text-white">
+                    <svg id="history-toggle-icon" class="h-3.5 w-3.5 transition-transform duration-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+                    </svg>
+                    <span id="history-toggle-label">Show version history</span>
+                </button>
+            </div>
+
+            <div id="history-panel" class="mt-4 grid grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-300 ease-in-out">
+                <div class="overflow-hidden">
+                    <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl backdrop-blur">
+                        <p class="mb-4 text-sm uppercase tracking-wider text-slate-400">Version History</p>
+                        <ul id="history-list" class="divide-y divide-slate-800">
+                            <li class="py-3 text-sm text-slate-500">Loading…</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
         </div>
     </main>
 
@@ -64,6 +84,13 @@
         const errorBannerEl = document.getElementById("error-banner");
         const totalCardEl = document.getElementById("total-card");
         const latestCardEl = document.getElementById("latest-card");
+        const historyToggleEl = document.getElementById("history-toggle");
+        const historyToggleIconEl = document.getElementById("history-toggle-icon");
+        const historyToggleLabelEl = document.getElementById("history-toggle-label");
+        const historyPanelEl = document.getElementById("history-panel");
+        const historyListEl = document.getElementById("history-list");
+
+        let isHistoryVisible = false;
 
         let lastUpdatedAt = null;
         let currentTotal = 0;
@@ -109,6 +136,78 @@
             };
 
             requestAnimationFrame(step);
+        };
+
+        const renderHistory = (releases) => {
+            historyListEl.innerHTML = "";
+
+            if (!releases.length) {
+                const li = document.createElement("li");
+                li.className = "py-3 text-sm text-slate-500";
+                li.textContent = "No releases yet";
+                historyListEl.appendChild(li);
+                return;
+            }
+
+            const counts = releases.map(sumAssetDownloads);
+            const maxCount = Math.max(...counts);
+
+            releases.forEach((release, index) => {
+                const releaseCount = counts[index];
+                const isTop = releaseCount === maxCount && maxCount > 0;
+
+                const li = document.createElement("li");
+                li.className = isTop
+                    ? "flex items-center justify-between gap-4 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-3 -mx-3"
+                    : "flex items-center justify-between gap-4 py-3";
+
+                const info = document.createElement("div");
+                info.className = "min-w-0";
+
+                const nameRow = document.createElement("div");
+                nameRow.className = "flex items-center gap-2";
+
+                const name = document.createElement("p");
+                name.className = isTop
+                    ? "truncate text-sm font-medium text-amber-200"
+                    : "truncate text-sm text-slate-300";
+                name.textContent = release.name || release.tag_name;
+                nameRow.appendChild(name);
+
+                if (isTop) {
+                    const badge = document.createElement("span");
+                    badge.className = "inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300";
+                    badge.textContent = "★ Top";
+                    nameRow.appendChild(badge);
+                }
+
+                const date = document.createElement("p");
+                date.className = "text-xs text-slate-500";
+                date.textContent = formatDate(release.published_at);
+
+                info.appendChild(nameRow);
+                info.appendChild(date);
+
+                const count = document.createElement("span");
+                count.className = isTop
+                    ? "shrink-0 font-mono text-sm font-bold tabular-nums text-amber-300"
+                    : "shrink-0 font-mono text-sm tabular-nums text-slate-200";
+                count.textContent = formatNumber(releaseCount);
+
+                li.appendChild(info);
+                li.appendChild(count);
+                historyListEl.appendChild(li);
+            });
+        };
+
+        const setHistoryVisible = (visible) => {
+            isHistoryVisible = visible;
+            historyPanelEl.classList.toggle("grid-rows-[0fr]", !visible);
+            historyPanelEl.classList.toggle("grid-rows-[1fr]", visible);
+            historyPanelEl.classList.toggle("opacity-0", !visible);
+            historyToggleLabelEl.textContent = visible ? "Hide version history" : "Show version history";
+            historyToggleIconEl.classList.toggle("rotate-180", visible);
+            historyToggleEl.setAttribute("aria-expanded", String(visible));
         };
 
         const setErrorState = (hasError) => {
@@ -181,6 +280,8 @@
                     latestDateEl.textContent = "—";
                 }
 
+                renderHistory(releases);
+
                 lastUpdatedAt = Date.now();
                 updateRelativeTime();
                 setErrorState(false);
@@ -194,7 +295,12 @@
             }
         };
 
+        historyToggleEl.addEventListener("click", () => {
+            setHistoryVisible(!isHistoryVisible);
+        });
+
         window.addEventListener("DOMContentLoaded", () => {
+            setHistoryVisible(false);
             fetchAndRender();
             setInterval(fetchAndRender, POLL_INTERVAL);
             setInterval(updateRelativeTime, 1000);
