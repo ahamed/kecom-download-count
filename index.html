@@ -108,25 +108,38 @@
         let isHistoryVisible = true;
         let distributionChart = null;
         let currentSliceColors = [];
-        let currentChannels = [];
         let distributionTotal = 0;
 
         const CHANNEL_DEFS = [
             { key: "alpha", label: "Alpha", test: /alpha/i, color: { base: "#8b5cf6", light: "#c4b5fd" } },
             { key: "beta", label: "Beta", test: /beta/i, color: { base: "#3b82f6", light: "#93c5fd" } },
-            { key: "rc", label: "Release Candidate", test: /(^|[^a-z])rc([^a-z]|\d|$)/i, color: { base: "#f59e0b", light: "#fcd34d" } },
+            { key: "rc", label: "RC", test: /(^|[^a-z])rc([^a-z]|\d|$)/i, color: { base: "#f59e0b", light: "#fcd34d" } },
         ];
         const STABLE_CHANNEL = { key: "stable", label: "Stable", color: { base: "#10b981", light: "#6ee7b7" } };
+        const NEUTRAL_COLOR = { base: "#1e293b", light: "#1e293b" };
 
         const getChannel = (release) => {
             const text = `${release.tag_name || ""} ${release.name || ""}`;
             return CHANNEL_DEFS.find((def) => def.test.test(text)) || STABLE_CHANNEL;
         };
 
+        const SLICE_PALETTE = [
+            { base: "#8b5cf6", light: "#c4b5fd" },
+            { base: "#3b82f6", light: "#93c5fd" },
+            { base: "#10b981", light: "#6ee7b7" },
+            { base: "#f59e0b", light: "#fcd34d" },
+            { base: "#f43f5e", light: "#fda4af" },
+            { base: "#06b6d4", light: "#67e8f9" },
+            { base: "#d946ef", light: "#f0abfc" },
+            { base: "#84cc16", light: "#bef264" },
+        ];
+
+        const getSliceColor = (index) => SLICE_PALETTE[index % SLICE_PALETTE.length];
+
         const sliceGradientScriptable = (context) => {
             const { chart, dataIndex } = context;
             const { ctx, chartArea } = chart;
-            const { base, light } = currentSliceColors[dataIndex] || STABLE_CHANNEL.color;
+            const { base, light } = currentSliceColors[dataIndex] || NEUTRAL_COLOR;
 
             if (!chartArea) return base;
 
@@ -307,37 +320,30 @@
             });
         };
 
+        const appendStatRow = (label, value, valueClass = "text-slate-200") => {
+            const li = document.createElement("li");
+            li.className = "flex items-center justify-between gap-3 text-sm";
+
+            const left = document.createElement("span");
+            left.className = "text-slate-400";
+            left.textContent = label;
+
+            const right = document.createElement("span");
+            right.className = `shrink-0 font-mono tabular-nums ${valueClass}`;
+            right.textContent = value;
+
+            li.appendChild(left);
+            li.appendChild(right);
+            distributionLegendEl.appendChild(li);
+        };
+
         const renderDistribution = (releases) => {
             const counts = releases.map(sumAssetDownloads);
             const total = counts.reduce((sum, value) => sum + value, 0);
             const hasData = releases.length > 0 && total > 0;
             distributionTotal = total;
 
-            const channelOrder = [];
-            const channelMap = new Map();
-
-            releases.forEach((release, index) => {
-                const channel = getChannel(release);
-                if (!channelMap.has(channel.key)) {
-                    channelMap.set(channel.key, {
-                        label: channel.label,
-                        color: channel.color,
-                        releaseCount: 0,
-                        downloads: 0,
-                    });
-                    channelOrder.push(channel.key);
-                }
-                const entry = channelMap.get(channel.key);
-                entry.releaseCount += 1;
-                entry.downloads += counts[index];
-            });
-
-            const channels = channelOrder
-                .map((key) => channelMap.get(key))
-                .sort((a, b) => b.downloads - a.downloads);
-
-            currentChannels = channels;
-            currentSliceColors = hasData ? channels.map((channel) => channel.color) : [STABLE_CHANNEL.color];
+            currentSliceColors = hasData ? releases.map((_, index) => getSliceColor(index)) : [NEUTRAL_COLOR];
 
             distributionLegendEl.innerHTML = "";
 
@@ -347,39 +353,13 @@
                 li.textContent = "No download data yet";
                 distributionLegendEl.appendChild(li);
             } else {
-                channels.forEach((channel) => {
-                    const percent = ((channel.downloads / total) * 100).toFixed(1);
-                    const releaseWord = channel.releaseCount === 1 ? "release" : "releases";
-
-                    const li = document.createElement("li");
-                    li.className = "flex items-center justify-between gap-3 text-sm";
-
-                    const left = document.createElement("span");
-                    left.className = "flex min-w-0 items-center gap-2 text-slate-300";
-
-                    const swatch = document.createElement("span");
-                    swatch.className = "h-2.5 w-2.5 shrink-0 rounded-full";
-                    swatch.style.backgroundColor = channel.color.base;
-
-                    const label = document.createElement("span");
-                    label.className = "truncate";
-                    label.textContent = `${channel.label} · ${channel.releaseCount} ${releaseWord}`;
-
-                    left.appendChild(swatch);
-                    left.appendChild(label);
-
-                    const right = document.createElement("span");
-                    right.className = "shrink-0 font-mono tabular-nums text-slate-400";
-                    right.textContent = `${formatNumber(channel.downloads)} · ${percent}%`;
-
-                    li.appendChild(left);
-                    li.appendChild(right);
-                    distributionLegendEl.appendChild(li);
-                });
-
                 const maxCount = Math.max(...counts);
                 const topIndex = counts.indexOf(maxCount);
                 const topRelease = releases[topIndex];
+                const average = total / releases.length;
+
+                appendStatRow("Total Releases", String(releases.length));
+                appendStatRow("Avg. per Release", formatNumber(average));
 
                 const topLi = document.createElement("li");
                 topLi.className = "mt-1 flex items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm";
@@ -405,14 +385,55 @@
                 topLi.appendChild(topRight);
                 distributionLegendEl.appendChild(topLi);
 
-                const releaseCountLi = document.createElement("li");
-                releaseCountLi.className = "flex items-center justify-between gap-3 text-sm text-slate-400";
-                releaseCountLi.innerHTML = `<span>Total releases</span><span class="font-mono tabular-nums">${releases.length}</span>`;
-                distributionLegendEl.appendChild(releaseCountLi);
+                const channelCounts = new Map();
+                const channelOrder = [];
+                releases.forEach((release) => {
+                    const channel = getChannel(release);
+                    if (!channelCounts.has(channel.key)) {
+                        channelCounts.set(channel.key, { label: channel.label, color: channel.color, count: 0 });
+                        channelOrder.push(channel.key);
+                    }
+                    channelCounts.get(channel.key).count += 1;
+                });
+                const channels = channelOrder
+                    .map((key) => channelCounts.get(key))
+                    .sort((a, b) => b.count - a.count);
+
+                const channelLi = document.createElement("li");
+                channelLi.className = "mt-1 border-t border-slate-800 pt-3 text-sm";
+
+                const channelHeading = document.createElement("p");
+                channelHeading.className = "mb-2 text-slate-400";
+                channelHeading.textContent = "By Channel";
+                channelLi.appendChild(channelHeading);
+
+                const chipRow = document.createElement("div");
+                chipRow.className = "flex flex-wrap gap-x-3 gap-y-1.5";
+
+                channels.forEach((channel) => {
+                    const chip = document.createElement("span");
+                    chip.className = "inline-flex items-center gap-1.5 text-xs text-slate-300";
+
+                    const dot = document.createElement("span");
+                    dot.className = "h-2 w-2 shrink-0 rounded-full";
+                    dot.style.backgroundColor = channel.color.base;
+
+                    const chipLabel = document.createElement("span");
+                    chipLabel.textContent = `${channel.count} ${channel.label}`;
+
+                    chip.appendChild(dot);
+                    chip.appendChild(chipLabel);
+                    chipRow.appendChild(chip);
+                });
+
+                channelLi.appendChild(chipRow);
+                distributionLegendEl.appendChild(channelLi);
             }
 
-            const chartData = hasData ? channels.map((channel) => channel.downloads) : [1];
-            const chartLabels = hasData ? channels.map((channel) => channel.label) : ["No data"];
+            const chartData = hasData ? counts : [1];
+            const chartLabels = hasData
+                ? releases.map((release) => release.name || release.tag_name)
+                : ["No data"];
             const backgroundColors = hasData ? sliceGradientScriptable : ["#1e293b"];
 
             if (!distributionChart) {
@@ -445,10 +466,7 @@
                                     label: (context) => {
                                         const value = context.parsed;
                                         const pct = distributionTotal ? ((value / distributionTotal) * 100).toFixed(1) : "0.0";
-                                        const channel = currentChannels[context.dataIndex];
-                                        if (!channel) return ` ${formatNumber(value)} downloads`;
-                                        const releaseWord = channel.releaseCount === 1 ? "release" : "releases";
-                                        return ` ${formatNumber(value)} downloads (${pct}%) · ${channel.releaseCount} ${releaseWord}`;
+                                        return ` ${context.label}: ${formatNumber(value)} (${pct}%)`;
                                     },
                                 },
                             },
