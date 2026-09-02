@@ -161,6 +161,44 @@
             },
         };
 
+        const sliceLabelsPlugin = {
+            id: "sliceLabels",
+            afterDraw(chart) {
+                if (chart.data.labels.length === 1 && chart.data.labels[0] === "No data") return;
+
+                const meta = chart.getDatasetMeta(0);
+                const values = chart.data.datasets[0]?.data ?? [];
+                const total = values.reduce((sum, value) => sum + value, 0);
+
+                if (!meta || !total) return;
+
+                const { ctx } = chart;
+                ctx.save();
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.font = "700 12px ui-sans-serif, system-ui, sans-serif";
+                ctx.fillStyle = "#f8fafc";
+                ctx.shadowColor = "rgba(2, 6, 23, 0.85)";
+                ctx.shadowBlur = 4;
+
+                meta.data.forEach((arc, index) => {
+                    const value = values[index];
+                    const percent = (value / total) * 100;
+
+                    if (percent < 5) return;
+
+                    const midAngle = (arc.startAngle + arc.endAngle) / 2;
+                    const radius = (arc.innerRadius + arc.outerRadius) / 2;
+                    const x = arc.x + Math.cos(midAngle) * radius;
+                    const y = arc.y + Math.sin(midAngle) * radius;
+
+                    ctx.fillText(`${percent.toFixed(1)}%`, x, y);
+                });
+
+                ctx.restore();
+            },
+        };
+
         let lastUpdatedAt = null;
         let currentTotal = 0;
         let currentLatest = 0;
@@ -416,7 +454,7 @@
                             },
                         },
                     },
-                    plugins: [centerTextPlugin],
+                    plugins: [centerTextPlugin, sliceLabelsPlugin],
                 });
             } else {
                 distributionChart.data.labels = chartLabels;
