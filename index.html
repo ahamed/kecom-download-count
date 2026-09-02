@@ -41,6 +41,18 @@
                 </article>
             </div>
 
+            <article id="distribution-card" class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl backdrop-blur sm:p-8">
+                <p class="mb-6 text-sm uppercase tracking-wider text-slate-400">Download Distribution by Channel</p>
+                <div class="flex flex-col items-center gap-8 sm:flex-row">
+                    <div class="relative h-56 w-56 shrink-0">
+                        <canvas id="distribution-chart"></canvas>
+                    </div>
+                    <ul id="distribution-legend" class="w-full space-y-3">
+                        <li class="text-sm text-slate-500">Loading…</li>
+                    </ul>
+                </div>
+            </article>
+
             <footer class="mt-10 flex items-center justify-center gap-2 text-sm text-slate-500">
                 <span class="relative flex h-2.5 w-2.5" aria-hidden="true">
                     <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -51,14 +63,14 @@
 
             <div class="mt-6 text-center">
                 <button id="history-toggle" type="button" class="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-4 py-1.5 text-sm text-slate-300 transition-colors hover:border-slate-700 hover:text-white">
-                    <svg id="history-toggle-icon" class="h-3.5 w-3.5 transition-transform duration-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <svg id="history-toggle-icon" class="h-3.5 w-3.5 rotate-180 transition-transform duration-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
                     </svg>
-                    <span id="history-toggle-label">Show version history</span>
+                    <span id="history-toggle-label">Hide version history</span>
                 </button>
             </div>
 
-            <div id="history-panel" class="mt-4 grid grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-300 ease-in-out">
+            <div id="history-panel" class="mt-4 grid grid-rows-[1fr] opacity-100 transition-[grid-template-rows,opacity] duration-300 ease-in-out">
                 <div class="overflow-hidden">
                     <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl backdrop-blur">
                         <p class="mb-4 text-sm uppercase tracking-wider text-slate-400">Version History</p>
@@ -71,6 +83,7 @@
         </div>
     </main>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
     <script>
         const API_URL = "https://api.github.com/repos/themeum/kirki-ecommerce/releases";
         const POLL_INTERVAL = 60_000;
@@ -89,8 +102,64 @@
         const historyToggleLabelEl = document.getElementById("history-toggle-label");
         const historyPanelEl = document.getElementById("history-panel");
         const historyListEl = document.getElementById("history-list");
+        const distributionChartCanvas = document.getElementById("distribution-chart");
+        const distributionLegendEl = document.getElementById("distribution-legend");
 
-        let isHistoryVisible = false;
+        let isHistoryVisible = true;
+        let distributionChart = null;
+        let currentSliceColors = [];
+        let currentChannels = [];
+        let distributionTotal = 0;
+
+        const CHANNEL_DEFS = [
+            { key: "alpha", label: "Alpha", test: /alpha/i, color: { base: "#8b5cf6", light: "#c4b5fd" } },
+            { key: "beta", label: "Beta", test: /beta/i, color: { base: "#3b82f6", light: "#93c5fd" } },
+            { key: "rc", label: "Release Candidate", test: /(^|[^a-z])rc([^a-z]|\d|$)/i, color: { base: "#f59e0b", light: "#fcd34d" } },
+        ];
+        const STABLE_CHANNEL = { key: "stable", label: "Stable", color: { base: "#10b981", light: "#6ee7b7" } };
+
+        const getChannel = (release) => {
+            const text = `${release.tag_name || ""} ${release.name || ""}`;
+            return CHANNEL_DEFS.find((def) => def.test.test(text)) || STABLE_CHANNEL;
+        };
+
+        const sliceGradientScriptable = (context) => {
+            const { chart, dataIndex } = context;
+            const { ctx, chartArea } = chart;
+            const { base, light } = currentSliceColors[dataIndex] || STABLE_CHANNEL.color;
+
+            if (!chartArea) return base;
+
+            const centerX = (chartArea.left + chartArea.right) / 2;
+            const centerY = (chartArea.top + chartArea.bottom) / 2;
+            const radius = Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 2;
+
+            const gradient = ctx.createRadialGradient(centerX, centerY, radius * 0.15, centerX, centerY, radius);
+            gradient.addColorStop(0, light);
+            gradient.addColorStop(1, base);
+            return gradient;
+        };
+
+        const centerTextPlugin = {
+            id: "centerText",
+            afterDraw(chart) {
+                const { ctx, chartArea } = chart;
+                const total = (chart.data.datasets[0]?.data ?? []).reduce((sum, value) => sum + value, 0);
+                const centerX = (chartArea.left + chartArea.right) / 2;
+                const centerY = (chartArea.top + chartArea.bottom) / 2;
+
+                ctx.save();
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "#94a3b8";
+                ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+                ctx.fillText("TOTAL", centerX, centerY - 14);
+                ctx.fillStyle = "#f8fafc";
+                ctx.font = "700 22px ui-sans-serif, system-ui, sans-serif";
+                ctx.fillText(formatNumber(total), centerX, centerY + 8);
+                ctx.restore();
+            },
+        };
 
         let lastUpdatedAt = null;
         let currentTotal = 0;
@@ -200,6 +269,164 @@
             });
         };
 
+        const renderDistribution = (releases) => {
+            const counts = releases.map(sumAssetDownloads);
+            const total = counts.reduce((sum, value) => sum + value, 0);
+            const hasData = releases.length > 0 && total > 0;
+            distributionTotal = total;
+
+            const channelOrder = [];
+            const channelMap = new Map();
+
+            releases.forEach((release, index) => {
+                const channel = getChannel(release);
+                if (!channelMap.has(channel.key)) {
+                    channelMap.set(channel.key, {
+                        label: channel.label,
+                        color: channel.color,
+                        releaseCount: 0,
+                        downloads: 0,
+                    });
+                    channelOrder.push(channel.key);
+                }
+                const entry = channelMap.get(channel.key);
+                entry.releaseCount += 1;
+                entry.downloads += counts[index];
+            });
+
+            const channels = channelOrder
+                .map((key) => channelMap.get(key))
+                .sort((a, b) => b.downloads - a.downloads);
+
+            currentChannels = channels;
+            currentSliceColors = hasData ? channels.map((channel) => channel.color) : [STABLE_CHANNEL.color];
+
+            distributionLegendEl.innerHTML = "";
+
+            if (!hasData) {
+                const li = document.createElement("li");
+                li.className = "text-sm text-slate-500";
+                li.textContent = "No download data yet";
+                distributionLegendEl.appendChild(li);
+            } else {
+                channels.forEach((channel) => {
+                    const percent = ((channel.downloads / total) * 100).toFixed(1);
+                    const releaseWord = channel.releaseCount === 1 ? "release" : "releases";
+
+                    const li = document.createElement("li");
+                    li.className = "flex items-center justify-between gap-3 text-sm";
+
+                    const left = document.createElement("span");
+                    left.className = "flex min-w-0 items-center gap-2 text-slate-300";
+
+                    const swatch = document.createElement("span");
+                    swatch.className = "h-2.5 w-2.5 shrink-0 rounded-full";
+                    swatch.style.backgroundColor = channel.color.base;
+
+                    const label = document.createElement("span");
+                    label.className = "truncate";
+                    label.textContent = `${channel.label} · ${channel.releaseCount} ${releaseWord}`;
+
+                    left.appendChild(swatch);
+                    left.appendChild(label);
+
+                    const right = document.createElement("span");
+                    right.className = "shrink-0 font-mono tabular-nums text-slate-400";
+                    right.textContent = `${formatNumber(channel.downloads)} · ${percent}%`;
+
+                    li.appendChild(left);
+                    li.appendChild(right);
+                    distributionLegendEl.appendChild(li);
+                });
+
+                const maxCount = Math.max(...counts);
+                const topIndex = counts.indexOf(maxCount);
+                const topRelease = releases[topIndex];
+
+                const topLi = document.createElement("li");
+                topLi.className = "mt-1 flex items-center justify-between gap-3 border-t border-slate-800 pt-3 text-sm";
+
+                const topLeft = document.createElement("span");
+                topLeft.className = "flex min-w-0 items-center gap-2 text-amber-300";
+
+                const topIcon = document.createElement("span");
+                topIcon.textContent = "★";
+
+                const topLabel = document.createElement("span");
+                topLabel.className = "truncate";
+                topLabel.textContent = `Top: ${topRelease.name || topRelease.tag_name}`;
+
+                topLeft.appendChild(topIcon);
+                topLeft.appendChild(topLabel);
+
+                const topRight = document.createElement("span");
+                topRight.className = "shrink-0 font-mono tabular-nums text-amber-300";
+                topRight.textContent = formatNumber(maxCount);
+
+                topLi.appendChild(topLeft);
+                topLi.appendChild(topRight);
+                distributionLegendEl.appendChild(topLi);
+
+                const releaseCountLi = document.createElement("li");
+                releaseCountLi.className = "flex items-center justify-between gap-3 text-sm text-slate-400";
+                releaseCountLi.innerHTML = `<span>Total releases</span><span class="font-mono tabular-nums">${releases.length}</span>`;
+                distributionLegendEl.appendChild(releaseCountLi);
+            }
+
+            const chartData = hasData ? channels.map((channel) => channel.downloads) : [1];
+            const chartLabels = hasData ? channels.map((channel) => channel.label) : ["No data"];
+            const backgroundColors = hasData ? sliceGradientScriptable : ["#1e293b"];
+
+            if (!distributionChart) {
+                distributionChart = new Chart(distributionChartCanvas, {
+                    type: "doughnut",
+                    data: {
+                        labels: chartLabels,
+                        datasets: [{
+                            data: chartData,
+                            backgroundColor: backgroundColors,
+                            borderColor: "#020617",
+                            borderWidth: 2,
+                            hoverOffset: 8,
+                        }],
+                    },
+                    options: {
+                        cutout: "68%",
+                        animation: { duration: 600, easing: "easeOutQuart" },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                enabled: hasData,
+                                backgroundColor: "#0f172a",
+                                borderColor: "#1e293b",
+                                borderWidth: 1,
+                                titleColor: "#f8fafc",
+                                bodyColor: "#cbd5e1",
+                                padding: 10,
+                                callbacks: {
+                                    label: (context) => {
+                                        const value = context.parsed;
+                                        const pct = distributionTotal ? ((value / distributionTotal) * 100).toFixed(1) : "0.0";
+                                        const channel = currentChannels[context.dataIndex];
+                                        if (!channel) return ` ${formatNumber(value)} downloads`;
+                                        const releaseWord = channel.releaseCount === 1 ? "release" : "releases";
+                                        return ` ${formatNumber(value)} downloads (${pct}%) · ${channel.releaseCount} ${releaseWord}`;
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    plugins: [centerTextPlugin],
+                });
+            } else {
+                distributionChart.data.labels = chartLabels;
+                distributionChart.data.datasets[0].data = chartData;
+                distributionChart.data.datasets[0].backgroundColor = backgroundColors;
+                distributionChart.options.plugins.tooltip.enabled = hasData;
+                distributionChart.update();
+            }
+        };
+
         const setHistoryVisible = (visible) => {
             isHistoryVisible = visible;
             historyPanelEl.classList.toggle("grid-rows-[0fr]", !visible);
@@ -281,6 +508,7 @@
                 }
 
                 renderHistory(releases);
+                renderDistribution(releases);
 
                 lastUpdatedAt = Date.now();
                 updateRelativeTime();
@@ -300,7 +528,7 @@
         });
 
         window.addEventListener("DOMContentLoaded", () => {
-            setHistoryVisible(false);
+            setHistoryVisible(true);
             fetchAndRender();
             setInterval(fetchAndRender, POLL_INTERVAL);
             setInterval(updateRelativeTime, 1000);
